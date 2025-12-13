@@ -179,7 +179,7 @@ class ParamSyncApp(ctk.CTk):
                 SELECT COUNT(*) FROM (
                     SELECT phone FROM listings
                     WHERE phone IS NOT NULL
-                    GROUP BY phone, price, rooms, area_kvm
+                    GROUP BY phone, price, source_link
                     HAVING COUNT(*) > 1
                 )
                 """
@@ -201,8 +201,14 @@ class ParamSyncApp(ctk.CTk):
                 )
                 self.progress_bar.set(0.05)
 
-                date_from = self.from_cal.get_date().strftime("%Y-%m-%d")
-                date_to = self.to_cal.get_date().strftime("%Y-%m-%d")
+                from_raw = (self.from_cal.get() or "").strip()
+                to_raw = (self.to_cal.get() or "").strip()
+                date_from = None
+                date_to = None
+                if from_raw and to_raw:
+                    date_from = self.from_cal.get_date().strftime("%Y-%m-%d")
+                    date_to = self.to_cal.get_date().strftime("%Y-%m-%d")
+
                 days = self.day_entry.get().strip()
 
                 added_total = estatebase_sync.sync_with_progress(
