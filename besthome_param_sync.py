@@ -16,6 +16,17 @@ BG = "#F5F8FF"
 TEXT = "#333333"
 
 
+def sync_with_progress(date_from, date_to, days, progress_bar, label, state_controller=None):
+    return estatebase_sync.sync_with_progress(
+        date_from,
+        date_to,
+        days,
+        progress_bar,
+        label,
+        state_controller=state_controller,
+    )
+
+
 class SyncStateController:
     RUNNING = "RUNNING"
     PAUSED = "PAUSED"
@@ -338,7 +349,7 @@ class ParamSyncApp(ctk.CTk):
 
                 days = self.day_entry.get().strip()
 
-                added_total = estatebase_sync.sync_with_progress(
+                added_total = sync_with_progress(
                     date_from,
                     date_to,
                     days,
