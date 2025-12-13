@@ -42,14 +42,14 @@ def sync_with_progress(date_from, date_to, days, progress_bar, label):
 
     # Dinamik WHERE (istifadəçinin daxil etdiyi tarix və ya gün aralığına görə)
     where = ""
-    if days and days.strip().startswith("-"):
+    if date_from and date_to:
+        where = f"WHERE CAST(p.insert_date_time AS date) BETWEEN '{date_from}' AND '{date_to}'"
+    elif days and days.strip().startswith("-"):
         try:
             n = int(days)
             where = f"WHERE CAST(p.insert_date_time AS date) >= DATEADD(DAY, {n}, CAST(GETDATE() AS date))"
         except Exception as err:
             print("⚠️ Gün sayı səhvdir:", err)
-    elif date_from and date_to:
-        where = f"WHERE CAST(p.insert_date_time AS date) BETWEEN '{date_from}' AND '{date_to}'"
 
     # SQL sorğusu
     query = f"""
@@ -103,7 +103,7 @@ def sync_with_progress(date_from, date_to, days, progress_bar, label):
     # Məlumatları işləməyə hazırlaş
     added = 0
     skipped = 0
-    last_seen = set()  # dublikatları saxlamaq üçün (phone, price, rooms, area_kvm, date_read)
+    last_seen = set()  # dublikatları saxlamaq üçün (site, phone, price)
 
     # Hər sətri oxu və SQLite bazasına yaz
     for i, r in enumerate(df.itertuples(index=False), start=1):
@@ -117,12 +117,12 @@ def sync_with_progress(date_from, date_to, days, progress_bar, label):
                 continue
 
             # Əsas dublikat açarı
+            source_link = safe(r[18])
+
             key = (
+                source_link,
                 phone,
                 str(safe(r[10])),  # qiymət
-                str(safe(r[4])),   # otaq sayı
-                str(safe(r[9])),   # sahə kvm
-                date_only,
             )
             if key in last_seen:
                 skipped += 1
@@ -150,7 +150,7 @@ def sync_with_progress(date_from, date_to, days, progress_bar, label):
                 "address": safe(r[15]),
                 "document": safe(r[16]),
                 "summary": safe(r[17]),
-                "source_link": safe(r[18]),
+                "source_link": source_link,
             }
 
             if add_listing_row(rec):

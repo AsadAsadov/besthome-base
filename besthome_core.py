@@ -95,8 +95,8 @@ def add_listing_row(rec):
     c = conn.cursor()
 
     c.execute(
-        "SELECT id FROM listings WHERE phone=? AND price=?",
-        (rec.get("phone"), rec.get("price")),
+        "SELECT id FROM listings WHERE phone=? AND price=? AND source_link IS ?",
+        (rec.get("phone"), rec.get("price"), rec.get("source_link")),
     )
     exists = c.fetchone()
     if exists:
