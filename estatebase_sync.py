@@ -21,7 +21,7 @@ def safe(v):
 
 
 # ---------- Əsas sinxronizasiya funksiyası ----------
-def sync_with_progress(date_from, date_to, days, progress_bar, label):
+def sync_with_progress(date_from, date_to, days, progress_bar, label, state_controller=None):
     """SQL-dən məlumatları çəkir, dublikatları yoxlayır və dinamik progress göstərir."""
     print(f"🔄 Sinxron başlanır: {date_from} → {date_to} | gün: {days}")
 
@@ -108,6 +108,12 @@ def sync_with_progress(date_from, date_to, days, progress_bar, label):
     # Hər sətri oxu və SQLite bazasına yaz
     for i, r in enumerate(df.itertuples(index=False), start=1):
         try:
+            if state_controller:
+                stopped = state_controller.wait_if_paused()
+                if stopped or state_controller.should_stop():
+                    label.configure(text="⏹️ Sinxronizasiya dayandırıldı", text_color="#E74C3C")
+                    break
+
             # Tarix formatı (yalnız YYYY-MM-DD)
             date_only = str(r[0])[:10] if r[0] else None
 
