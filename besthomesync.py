@@ -8,7 +8,7 @@ import customtkinter as ctk
 from tkcalendar import DateEntry
 
 import estatebase_sync
-from besthome_core import init_db, ensure_tables
+from estatebase_sync import init_db, ensure_tables
 
 
 PRIMARY = "#0078D4"
