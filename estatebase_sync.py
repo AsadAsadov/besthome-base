@@ -1,17 +1,19 @@
 # ============================================
-# estatebase_sync.py — EstateBase SQL → BestHomeBase inteqrasiya (progress + duplikat nəzarəti)
-# Əsəd Əsədov ©️ 2025
+# estatebase_sync.py — EstateBase SQL → BestHomeBase
+# FINAL + BAT FIX
 # ============================================
 
 import pyodbc
 import pandas as pd
 import time
-from besthome_core import add_listing_row
+from urllib.parse import urlparse
 from datetime import datetime
 
-# ---------- Təhlükəsiz dəyər funksiyası ----------
+from besthome_core import add_listing_row
+
+
+# ---------- Təhlükəsiz dəyər ----------
 def safe(v):
-    """Boş və NaN dəyərləri təmizləyir"""
     if v is None:
         return None
     if pd.isna(v):
@@ -20,12 +22,20 @@ def safe(v):
     return s if s else None
 
 
-# ---------- Əsas sinxronizasiya funksiyası ----------
-def sync_with_progress(date_from, date_to, days, progress_bar, label, state_controller=None):
-    """SQL-dən məlumatları çəkir, dublikatları yoxlayır və dinamik progress göstərir."""
-    print(f"🔄 Sinxron başlanır: {date_from} → {date_to} | gün: {days}")
+# ---------- Saytı linkdən çıxar ----------
+def extract_site(link):
+    try:
+        return urlparse(str(link)).netloc.replace("www.", "").lower()
+    except Exception:
+        return None
 
-    # Bağlantı sətri
+
+# ---------- Əsas sinxron ----------
+def sync_with_progress(
+    date_from, date_to, days, progress_bar, label, state_controller=None
+):
+    print(f"🔄 Sinxron başlanır | date_from={date_from} date_to={date_to} days={days}")
+
     conn_str = (
         "Driver={SQL Server};"
         "Server=.\\SQLEXPRESS;"
@@ -36,43 +46,44 @@ def sync_with_progress(date_from, date_to, days, progress_bar, label, state_cont
     try:
         conn = pyodbc.connect(conn_str)
     except Exception as err:
-        print(f"❌ Bağlantı xətası: {err}")
-        label.configure(text=f"❌ Bağlantı xətası: {err}", text_color="#E74C3C")
+        print("❌ SQL bağlantı xətası:", err)
+        label.configure(text=str(err))
         return 0
 
-    # Dinamik WHERE (istifadəçinin daxil etdiyi tarix və ya gün aralığına görə)
     where = ""
     if date_from and date_to:
-        where = f"WHERE CAST(p.insert_date_time AS date) BETWEEN '{date_from}' AND '{date_to}'"
-    elif days and days.strip().startswith("-"):
-        try:
-            n = int(days)
-            where = f"WHERE CAST(p.insert_date_time AS date) >= DATEADD(DAY, {n}, CAST(GETDATE() AS date))"
-        except Exception as err:
-            print("⚠️ Gün sayı səhvdir:", err)
+        where = f"""
+            WHERE CAST(p.insert_date_time AS date)
+            BETWEEN '{date_from}' AND '{date_to}'
+        """
+    elif days and str(days).startswith("-"):
+        n = int(days)
+        where = f"""
+            WHERE CAST(p.insert_date_time AS date)
+            >= DATEADD(DAY, {n}, CAST(GETDATE() AS date))
+        """
 
-    # SQL sorğusu
     query = f"""
     SELECT 
-        p.insert_date_time AS [Oxunma tarixi],
-        pt.property_type_name AS [Əmlak növü],
-        o.operation_type_name AS [Əməliyyat],
-        m.metro_name AS [Metro],
-        rc.room_count_name AS [Otaq sayı],
-        bt.building_type_name AS [Tikili növü],
-        p.floor AS [Mərtəbə],
-        p.floor_of AS [Binanın mərtəbəsi],
-        p.area AS [Sahə sot],
-        p.general_area AS [Sahə kvm],
-        p.price AS [Qiymət],
-        c.currency_name AS [Valyuta],
-        p.owner_phone_number_01 AS [Əlaqə 1],
-        p.owner_phone_number_02 AS [Əlaqə 2],
-        p.owner_full_name AS [Ad],
-        p.address AS [Ünvan],
-        d.document_name AS [Sənəd],
-        p.data AS [Ümumi məlumat],
-        p.source_note AS [Link]
+        p.insert_date_time,
+        pt.property_type_name,
+        o.operation_type_name,
+        m.metro_name,
+        rc.room_count_name,
+        bt.building_type_name,
+        p.floor,
+        p.floor_of,
+        p.area,
+        p.general_area,
+        p.price,
+        c.currency_name,
+        p.owner_phone_number_01,
+        p.owner_phone_number_02,
+        p.owner_full_name,
+        p.address,
+        d.document_name,
+        p.data,
+        p.source_note
     FROM dbo.property p
     LEFT JOIN dbo.property_type pt ON p.fk_id_property_type = pt.id_property_type
     LEFT JOIN dbo.building_type bt ON p.fk_id_building_type = bt.id_building_type
@@ -82,105 +93,89 @@ def sync_with_progress(date_from, date_to, days, progress_bar, label, state_cont
     LEFT JOIN dbo.metro m ON p.fk_id_metro = m.id_metro
     LEFT JOIN dbo.room_count rc ON p.fk_id_room = rc.id_room_count
     {where}
-    ORDER BY p.insert_date_time DESC;
+    ORDER BY p.insert_date_time DESC
     """
 
-    try:
-        df = pd.read_sql(query, conn)
-    except Exception as err:
-        print(f"❌ SQL sorğu xətası: {err}")
-        label.configure(text=f"❌ SQL sorğu xətası: {err}", text_color="#E74C3C")
-        return 0
-
+    df = pd.read_sql(query, conn)
     total = len(df)
-    print(f"✅ SQL-dən {total} elan tapıldı.")
+    print(f"📥 Tapılan elan sayı: {total}")
 
-    if total == 0:
-        label.configure(text="⚠️ Yeni elan tapılmadı", text_color="#888")
-        conn.close()
-        return 0
-
-    # Məlumatları işləməyə hazırlaş
     added = 0
     skipped = 0
-    last_seen = set()  # dublikatları saxlamaq üçün (site, phone, price)
+    last_seen = set()  # (date, site, phone)
 
-    # Hər sətri oxu və SQLite bazasına yaz
     for i, r in enumerate(df.itertuples(index=False), start=1):
-        try:
-            if state_controller:
-                stopped = state_controller.wait_if_paused()
-                if stopped or state_controller.should_stop():
-                    label.configure(text="⏹️ Sinxronizasiya dayandırıldı", text_color="#E74C3C")
-                    break
-
-            # Tarix formatı (yalnız YYYY-MM-DD)
-            date_only = str(r[0])[:10] if r[0] else None
-
-            # Əlaqə nömrəsi
-            phone = safe(r[12]) or safe(r[13])
-            if not phone:
-                continue
-
-            # Əsas dublikat açarı
-            source_link = safe(r[18])
-
-            key = (
-                source_link,
-                phone,
-                str(safe(r[10])),  # qiymət
-            )
-            if key in last_seen:
-                skipped += 1
-                continue
-            last_seen.add(key)
-
-            # Qeyd
-            rec = {
-                "date_read": date_only,
-                "prop_type": safe(r[1]),
-                "operation": safe(r[2]),
-                "metro": safe(r[3]),
-                "rooms": safe(r[4]),
-                "building": safe(r[5]),
-                "floor": f"{safe(r[6])}/{safe(r[7])}" if r[6] or r[7] else None,
-                "area_kvm": (
-                    f"{safe(r[8])} sot / {safe(r[9])} kvm"
-                    if r[8] or r[9]
-                    else None
-                ),
-                "price": float(r[10]) if r[10] else None,
-                "currency": safe(r[11]),
-                "phone": phone,
-                "contact_name": safe(r[14]),
-                "address": safe(r[15]),
-                "document": safe(r[16]),
-                "summary": safe(r[17]),
-                "source_link": source_link,
-            }
-
-            if add_listing_row(rec):
-                added += 1
-
-            # Real-time progress
-            pct = i / total
-            progress_bar.set(pct)
-            label.configure(
-                text=f"📊 Çəkilir: {i}/{total} ({int(pct * 100)}%)",
-                text_color="#0078D4",
-            )
-            if i % 25 == 0:
-                time.sleep(0.03)
-
-        except Exception as err:
-            print(f"⚠️ Sətir atlandı: {err}")
+        date_only = str(r[0])[:10] if r[0] else None
+        phone = safe(r[12]) or safe(r[13])
+        if not phone:
             continue
 
+        source_link = safe(r[18])
+        site = extract_site(source_link)
+
+        key = (date_only, site, phone)
+        if key in last_seen:
+            skipped += 1
+            continue
+        last_seen.add(key)
+
+        rec = {
+            "date_read": date_only,
+            "prop_type": safe(r[1]),
+            "operation": safe(r[2]),
+            "metro": safe(r[3]),
+            "rooms": safe(r[4]),
+            "building": safe(r[5]),
+            "floor": f"{safe(r[6])}/{safe(r[7])}" if r[6] or r[7] else None,
+            "area_kvm": (
+                f"{safe(r[8])} sot / {safe(r[9])} kvm" if r[8] or r[9] else None
+            ),
+            "price": float(r[10]) if r[10] else None,
+            "currency": safe(r[11]),
+            "phone": phone,
+            "contact_name": safe(r[14]),
+            "address": safe(r[15]),
+            "document": safe(r[16]),
+            "summary": safe(r[17]),
+            "source_link": source_link,
+        }
+
+        if add_listing_row(rec):
+            added += 1
+
+        if i % 50 == 0:
+            print(f"⏳ {i}/{total}")
+
     conn.close()
-    print(f"🏁 Tamamlandı: {added} elan əlavə edildi, {skipped} dublikat atlandı.")
-    label.configure(
-        text=f"✅ Tamamlandı: {added} yeni elan əlavə edildi | ♻️ {skipped} dublikat tapıldı",
-        text_color="#2ECC71" if added > 0 else "#888",
-    )
-    progress_bar.set(1.0)
+    print(f"🏁 Bitdi | əlavə edildi: {added} | run-dublikat: {skipped}")
     return added
+
+
+# ---------- BAT / CLI üçün ENTRY POINT ----------
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--date-from", dest="date_from", default=None)
+    parser.add_argument("--date-to", dest="date_to", default=None)
+    parser.add_argument("--days", dest="days", default="-1")
+    args = parser.parse_args()
+
+    # BAT üçün dummy UI obyektləri
+    class DummyBar:
+        def set(self, v):
+            pass
+
+    class DummyLabel:
+        def configure(self, **kwargs):
+            if "text" in kwargs:
+                print(kwargs["text"])
+
+    sync_with_progress(
+        args.date_from,
+        args.date_to,
+        args.days,
+        DummyBar(),
+        DummyLabel(),
+        state_controller=None,
+    )
