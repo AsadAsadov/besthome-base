@@ -104,6 +104,25 @@ def add_listing_row(rec):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
+    if rec.get("price") is not None:
+        c.execute(
+            """
+            SELECT 1
+            FROM listings
+            WHERE phone = ?
+              AND price = ?
+              AND DATE(created_at) = DATE('now','localtime')
+            LIMIT 1
+            """,
+            (rec["phone"], rec["price"]),
+        )
+        if c.fetchone():
+            print(
+                f"[SOFT-DEDUPE] Skipped same-day duplicate: phone={rec['phone']}, price={rec['price']}"
+            )
+            conn.close()
+            return False
+
     cols = list(rec.keys())
     vals = [rec[k] for k in cols]
     placeholders = ",".join(["?"] * len(cols))
