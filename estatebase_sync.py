@@ -12,6 +12,17 @@ from datetime import datetime, date
 
 DB_PATH = Path("besthome.db")
 
+# ---------- SQL Server Connection ----------
+def get_sql_conn():
+    return pyodbc.connect(
+        "DRIVER={ODBC Driver 17 for SQL Server};"
+        "SERVER=SERVER;"
+        "DATABASE=dbestate3;"
+        "UID=sa;"
+        "PWD=byte~~;"
+        "TrustServerCertificate=yes;"
+    )
+
 # ---------- DB Setup ----------
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -338,18 +349,12 @@ def sync_with_progress(
 ):
     print(f"🔄 Sinxron başlanır | date_from={date_from} date_to={date_to} days={days}")
 
-    conn_str = (
-        "Driver={SQL Server};"
-        "Server=.\\SQLEXPRESS;"
-        "Database=besthome;"
-        "Trusted_Connection=yes;"
-    )
-
     try:
-        conn = pyodbc.connect(conn_str)
+        conn = get_sql_conn()
+        print("✅ Connected to EstateBase SQL Server (SERVER\\dbestate3)")
     except Exception as err:
-        print("❌ SQL bağlantı xətası:", err)
-        label.configure(text=str(err))
+        print(f"❌ SQL connection failed: {err}")
+        label.configure(text=f"❌ SQL connection failed: {err}")
         return 0
 
     where = ""
