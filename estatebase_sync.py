@@ -1,6 +1,6 @@
 # ============================================
 # estatebase_sync.py — EstateBase SQL → BestHomeBase
-# FINAL + BAT FIX
+# FINAL + BAT FIX (EMOJISIZ)
 # ============================================
 
 import sqlite3
@@ -12,6 +12,7 @@ from datetime import datetime, date
 
 DB_PATH = Path("besthome.db")
 
+
 # ---------- SQL Server Connection ----------
 def get_sql_conn():
     return pyodbc.connect(
@@ -22,6 +23,7 @@ def get_sql_conn():
         "PWD=byte~~;"
         "TrustServerCertificate=yes;"
     )
+
 
 # ---------- DB Setup ----------
 def init_db():
@@ -88,12 +90,12 @@ def ensure_tables():
         for col, col_type in cols.items():
             try:
                 cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type};")
-                print(f"✅ '{col}' sütunu əlavə edildi ({table})")
+                print(f"[OK] '{col}' sütunu əlavə edildi ({table})")
             except Exception as e:
                 if "duplicate column name" in str(e).lower():
-                    pass  # artıq var
+                    pass
                 else:
-                    print(f"⚠️ '{col}' əlavə edilə bilmədi: {e}")
+                    print(f"[WARN] '{col}' əlavə edilə bilmədi: {e}")
 
     conn.commit()
     conn.close()
@@ -142,7 +144,7 @@ def add_listing_row(rec):
         c.execute(sql, vals)
         conn.commit()
     except Exception as e:
-        print(f"[⚠️ Əlavə edilə bilmədi] {e}")
+        print(f"[WARN] Əlavə edilə bilmədi: {e}")
     finally:
         conn.close()
     return True
@@ -229,13 +231,13 @@ def query_phones_summary(
     """
     params = []
 
-    # 🔍 Axtarış sözü varsa
     if keyword:
         kw = f"%{keyword.lower()}%"
-        base += " AND (LOWER(phone) LIKE ? OR LOWER(metro) LIKE ? OR LOWER(address) LIKE ?)"
+        base += (
+            " AND (LOWER(phone) LIKE ? OR LOWER(metro) LIKE ? OR LOWER(address) LIKE ?)"
+        )
         params += [kw, kw, kw]
 
-    # 📅 Tarix filtrləri
     if date_from:
         base += " AND date(created_at) >= date(?)"
         params.append(date_from)
@@ -243,7 +245,6 @@ def query_phones_summary(
         base += " AND date(created_at) <= date(?)"
         params.append(date_to)
 
-    # ⚙️ Satılan / favorit filtrləri
     if only_sold:
         base += " AND phone IN (SELECT phone FROM sold)"
     elif only_favorites:
@@ -325,7 +326,6 @@ def normalize_phone(p):
     return p.strip()
 
 
-# ---------- Təhlükəsiz dəyər ----------
 def safe(v):
     if v is None:
         return None
@@ -335,7 +335,6 @@ def safe(v):
     return s if s else None
 
 
-# ---------- Saytı linkdən çıxar ----------
 def extract_site(link):
     try:
         return urlparse(str(link)).netloc.replace("www.", "").lower()
@@ -347,14 +346,16 @@ def extract_site(link):
 def sync_with_progress(
     date_from, date_to, days, progress_bar, label, state_controller=None
 ):
-    print(f"🔄 Sinxron başlanır | date_from={date_from} date_to={date_to} days={days}")
+    print(
+        f"[SYNC] Sinxron başlanır | date_from={date_from} date_to={date_to} days={days}"
+    )
 
     try:
         conn = get_sql_conn()
-        print("✅ Connected to EstateBase SQL Server (SERVER\\dbestate3)")
+        print("[OK] Connected to EstateBase SQL Server (SERVER\\dbestate3)")
     except Exception as err:
-        print(f"❌ SQL connection failed: {err}")
-        label.configure(text=f"❌ SQL connection failed: {err}")
+        print(f"[ERR] SQL connection failed: {err}")
+        label.configure(text=f"[ERR] SQL connection failed: {err}")
         return 0
 
     where = ""
@@ -405,7 +406,7 @@ def sync_with_progress(
 
     df = pd.read_sql(query, conn)
     total = len(df)
-    print(f"📥 Tapılan elan sayı: {total}")
+    print(f"[INFO] Tapılan elan sayı: {total}")
 
     added = 0
 
@@ -442,10 +443,10 @@ def sync_with_progress(
             added += 1
 
         if i % 50 == 0:
-            print(f"⏳ {i}/{total}")
+            print(f"[STEP] {i}/{total}")
 
     conn.close()
-    print(f"🏁 Bitdi | əlavə edildi: {added}")
+    print(f"[DONE] Bitdi | əlavə edildi: {added}")
     return added
 
 
@@ -459,7 +460,6 @@ if __name__ == "__main__":
     parser.add_argument("--days", dest="days", default="-1")
     args = parser.parse_args()
 
-    # BAT üçün dummy UI obyektləri
     class DummyBar:
         def set(self, v):
             pass
