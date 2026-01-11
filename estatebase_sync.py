@@ -161,8 +161,28 @@ def add_listing_row(rec):
             conn.close()
             return False
 
-    cols = list(rec.keys())
-    vals = [rec[k] for k in cols]
+    cols = [
+        "date_read",
+        "title",
+        "prop_type",
+        "operation",
+        "metro",
+        "rooms",
+        "building",
+        "floor",
+        "area_kvm",
+        "price",
+        "currency",
+        "phone",
+        "contact_name",
+        "address",
+        "document",
+        "summary",
+        "source_link",
+        "created_at",
+        "updated_at",
+    ]
+    vals = [rec.get(k) for k in cols]
     placeholders = ",".join(["?"] * len(cols))
 
     # ƏSAS MEKANİZM: dublikat YOX, update VAR
@@ -171,10 +191,23 @@ def add_listing_row(rec):
         VALUES ({placeholders})
         ON CONFLICT(source_link)
         DO UPDATE SET
-            title      = excluded.title,
-            price      = excluded.price,
-            created_at = excluded.created_at,
-            updated_at = excluded.updated_at
+            title        = excluded.title,
+            price        = excluded.price,
+            operation    = excluded.operation,
+            metro        = excluded.metro,
+            rooms        = excluded.rooms,
+            building     = excluded.building,
+            floor        = excluded.floor,
+            area_kvm     = excluded.area_kvm,
+            currency     = excluded.currency,
+            phone        = excluded.phone,
+            contact_name = excluded.contact_name,
+            address      = excluded.address,
+            document     = excluded.document,
+            summary      = excluded.summary,
+            date_read    = excluded.date_read,
+            created_at   = excluded.created_at,
+            updated_at   = excluded.updated_at
     """
 
     try:
