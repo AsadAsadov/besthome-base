@@ -1,6 +1,6 @@
 # ============================================
 # estatebase_sync.py — EstateBase SQL → BestHomeBase
-# FINAL + BAT FIX (EMOJISIZ)
+# FINAL (DEDUP + STABLE)
 # ============================================
 
 import sqlite3
@@ -8,7 +8,7 @@ import pyodbc
 import pandas as pd
 from pathlib import Path
 from urllib.parse import urlparse
-from datetime import datetime, date
+from datetime import datetime
 
 DB_PATH = Path("besthome.db")
 _source_link_index_ready = False
@@ -30,6 +30,7 @@ def get_sql_conn():
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS listings (
@@ -54,16 +55,18 @@ def init_db():
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
-    """
+        """
     )
+
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS sold (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             phone TEXT UNIQUE
         )
-    """
+        """
     )
+
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS favorites (
@@ -71,8 +74,9 @@ def init_db():
             phone TEXT UNIQUE,
             color TEXT
         )
-    """
+        """
     )
+
     conn.commit()
     conn.close()
     ensure_source_link_unique_index()
@@ -85,7 +89,6 @@ def ensure_tables():
 
     required_cols = {
         "listings": {
-            "sql_id": "INTEGER",
             "source_link": "TEXT",
             "title": "TEXT",
             "updated_at": "TEXT",
@@ -112,6 +115,7 @@ def ensure_source_link_unique_index():
     global _source_link_index_ready
     if _source_link_index_ready:
         return
+
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         """
@@ -124,30 +128,20 @@ def ensure_source_link_unique_index():
     _source_link_index_ready = True
 
 
-# ---------- Əlavə və təmizlik ----------
-def clear_search_history():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("DELETE FROM search_history")
-    conn.commit()
-    conn.close()
-
-
+# ---------- Əlavə / Dedupe ilə ----------
 def add_listing_row(rec):
-    """Yeni elan əlavə et"""
     if not rec.get("phone"):
         return False
 
-    if "created_at" not in rec:
-        rec["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    if "updated_at" not in rec:
-        rec["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    if "title" not in rec:
-        rec["title"] = None
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rec.setdefault("created_at", now)
+    rec.setdefault("updated_at", now)
+    rec.setdefault("title", None)
 
-    ensure_source_link_unique_index()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
+    # soft dedupe: phone + price + today (yalnız source_link YOXDURSA)
     if rec.get("price") is not None and not rec.get("source_link"):
         c.execute(
             """
@@ -170,53 +164,33 @@ def add_listing_row(rec):
     cols = list(rec.keys())
     vals = [rec[k] for k in cols]
     placeholders = ",".join(["?"] * len(cols))
-    conflict = False
-    if rec.get("source_link"):
-        c.execute(
-            "SELECT 1 FROM listings WHERE source_link=? LIMIT 1",
-            (rec["source_link"],),
-        )
-        conflict = c.fetchone() is not None
 
+    # ƏSAS MEKANİZM: dublikat YOX, update VAR
     sql = f"""
         INSERT INTO listings ({','.join(cols)})
         VALUES ({placeholders})
         ON CONFLICT(source_link)
         DO UPDATE SET
-            title = excluded.title,
-            price = excluded.price,
+            title      = excluded.title,
+            price      = excluded.price,
             created_at = excluded.created_at,
             updated_at = excluded.updated_at
     """
+
     try:
         c.execute(sql, vals)
         conn.commit()
-        if conflict:
-            print(
-                f"Listing updated instead of duplicated: {rec.get('source_link')}"
-            )
-    except Exception as e:
-        if "ON CONFLICT" in str(e) or "syntax error" in str(e).lower():
-            fallback_sql = (
-                f"INSERT OR REPLACE INTO listings ({','.join(cols)}) VALUES ({placeholders})"
-            )
-            try:
-                c.execute(fallback_sql, vals)
-                conn.commit()
-                if conflict:
-                    print(
-                        f"Listing updated instead of duplicated: {rec.get('source_link')}"
-                    )
-            except Exception as fallback_error:
-                print(f"[WARN] Əlavə edilə bilmədi: {fallback_error}")
-        else:
-            print(f"[WARN] Əlavə edilə bilmədi: {e}")
+    except sqlite3.Error as e:
+        print(f"[WARN] Əlavə edilə bilmədi: {e}")
+        conn.close()
+        return False
     finally:
         conn.close()
+
     return True
 
 
-# ---------- Fərqləndirilənlər / Satılanlar ----------
+# ---------- Favorites / Sold ----------
 def set_favorite_phone(phone, color="#e8f2ff"):
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
@@ -258,7 +232,7 @@ def get_sold_set():
     return rows
 
 
-# ---------- Əsas Query ----------
+# ---------- Query ----------
 def query_phones_summary(
     keyword=None,
     limit=500,
@@ -327,59 +301,7 @@ def query_phones_summary(
     return rows
 
 
-# ---------- Dəstək funksiyalar ----------
-def get_distinct_values(col):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        f"SELECT DISTINCT {col} FROM listings WHERE {col} IS NOT NULL AND TRIM({col}) != '' ORDER BY {col} ASC"
-    )
-    vals = [r[0] for r in c.fetchall()]
-    conn.close()
-    return vals
-
-
-def get_listings_by_phone(phone):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT * FROM listings WHERE phone=? ORDER BY date_read DESC", (phone,))
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-
-def phone_stats(phone):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        """
-        SELECT 
-            MIN(date_read), MAX(date_read),
-            COUNT(*), AVG(price), MIN(price), MAX(price)
-        FROM listings WHERE phone=?
-    """,
-        (phone,),
-    )
-    r = c.fetchone()
-    conn.close()
-    if not r:
-        return {}
-    min_d, max_d, cnt, avg_p, min_p, max_p = r
-    trend = None
-    if min_p and max_p and min_p != 0:
-        trend = ((max_p - min_p) / min_p) * 100
-    return {
-        "first_date": min_d,
-        "last_date": max_d,
-        "count": cnt,
-        "avg_price": avg_p,
-        "min_price": min_p,
-        "max_price": max_p,
-        "trend_pct": trend,
-    }
-
-
+# ---------- Utils ----------
 def normalize_phone(p):
     if not p:
         return None
@@ -408,7 +330,7 @@ def extract_site(link):
         return None
 
 
-# ---------- Əsas sinxron ----------
+# ---------- Əsas sync ----------
 def sync_with_progress(
     date_from, date_to, days, progress_bar, label, state_controller=None
 ):
@@ -417,7 +339,7 @@ def sync_with_progress(
     )
 
     try:
-        conn = get_sql_conn()
+        sql_conn = get_sql_conn()
         print("[OK] Connected to EstateBase SQL Server (SERVER\\dbestate3)")
     except Exception as err:
         print(f"[ERR] SQL connection failed: {err}")
@@ -470,7 +392,7 @@ def sync_with_progress(
     ORDER BY p.insert_date_time DESC
     """
 
-    df = pd.read_sql(query, conn)
+    df = pd.read_sql(query, sql_conn)
     total = len(df)
     print(f"[INFO] Tapılan elan sayı: {total}")
 
@@ -511,12 +433,12 @@ def sync_with_progress(
         if i % 50 == 0:
             print(f"[STEP] {i}/{total}")
 
-    conn.close()
+    sql_conn.close()
     print(f"[DONE] Bitdi | əlavə edildi: {added}")
     return added
 
 
-# ---------- BAT / CLI üçün ENTRY POINT ----------
+# ---------- CLI / BAT ENTRY ----------
 if __name__ == "__main__":
     import argparse
 
