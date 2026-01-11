@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from datetime import datetime, date
 
 DB_PATH = Path("besthome.db")
+_source_link_index_ready = False
 
 
 # ---------- SQL Server Connection ----------
@@ -34,6 +35,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS listings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date_read TEXT,
+            title TEXT,
             prop_type TEXT,
             operation TEXT,
             metro TEXT,
@@ -49,7 +51,8 @@ def init_db():
             document TEXT,
             summary TEXT,
             source_link TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """
     )
@@ -72,6 +75,7 @@ def init_db():
     )
     conn.commit()
     conn.close()
+    ensure_source_link_unique_index()
 
 
 def ensure_tables():
@@ -83,6 +87,8 @@ def ensure_tables():
         "listings": {
             "sql_id": "INTEGER",
             "source_link": "TEXT",
+            "title": "TEXT",
+            "updated_at": "TEXT",
         },
     }
 
@@ -99,6 +105,23 @@ def ensure_tables():
 
     conn.commit()
     conn.close()
+    ensure_source_link_unique_index()
+
+
+def ensure_source_link_unique_index():
+    global _source_link_index_ready
+    if _source_link_index_ready:
+        return
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_listings_source_link
+        ON listings(source_link)
+        """
+    )
+    conn.commit()
+    conn.close()
+    _source_link_index_ready = True
 
 
 # ---------- Əlavə və təmizlik ----------
@@ -114,10 +137,18 @@ def add_listing_row(rec):
     if not rec.get("phone"):
         return False
 
+    if "created_at" not in rec:
+        rec["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if "updated_at" not in rec:
+        rec["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if "title" not in rec:
+        rec["title"] = None
+
+    ensure_source_link_unique_index()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
-    if rec.get("price") is not None:
+    if rec.get("price") is not None and not rec.get("source_link"):
         c.execute(
             """
             SELECT 1
@@ -139,12 +170,47 @@ def add_listing_row(rec):
     cols = list(rec.keys())
     vals = [rec[k] for k in cols]
     placeholders = ",".join(["?"] * len(cols))
-    sql = f"INSERT INTO listings ({','.join(cols)}) VALUES ({placeholders})"
+    conflict = False
+    if rec.get("source_link"):
+        c.execute(
+            "SELECT 1 FROM listings WHERE source_link=? LIMIT 1",
+            (rec["source_link"],),
+        )
+        conflict = c.fetchone() is not None
+
+    sql = f"""
+        INSERT INTO listings ({','.join(cols)})
+        VALUES ({placeholders})
+        ON CONFLICT(source_link)
+        DO UPDATE SET
+            title = excluded.title,
+            price = excluded.price,
+            created_at = excluded.created_at,
+            updated_at = excluded.updated_at
+    """
     try:
         c.execute(sql, vals)
         conn.commit()
+        if conflict:
+            print(
+                f"Listing updated instead of duplicated: {rec.get('source_link')}"
+            )
     except Exception as e:
-        print(f"[WARN] Əlavə edilə bilmədi: {e}")
+        if "ON CONFLICT" in str(e) or "syntax error" in str(e).lower():
+            fallback_sql = (
+                f"INSERT OR REPLACE INTO listings ({','.join(cols)}) VALUES ({placeholders})"
+            )
+            try:
+                c.execute(fallback_sql, vals)
+                conn.commit()
+                if conflict:
+                    print(
+                        f"Listing updated instead of duplicated: {rec.get('source_link')}"
+                    )
+            except Exception as fallback_error:
+                print(f"[WARN] Əlavə edilə bilmədi: {fallback_error}")
+        else:
+            print(f"[WARN] Əlavə edilə bilmədi: {e}")
     finally:
         conn.close()
     return True
