@@ -1060,6 +1060,6 @@ def run_bot():
     logger.info("Texnik CRM bot başladıldı")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     threading.Thread(target=run_bot, daemon=True).start()
     uvicorn.run(web_app, host="0.0.0.0", port=7860)
