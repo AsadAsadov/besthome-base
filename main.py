@@ -2,6 +2,9 @@ import logging
 import os
 import re
 import sqlite3
+import threading
+import uvicorn
+from fastapi import FastAPI
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -1040,18 +1043,23 @@ def build_application(token: str) -> Application:
 
     return app
 
+web_app = FastAPI()
 
-def main() -> None:
+@web_app.get("/")
+def health_check():
+    return {"status": "ok"}
+
+def run_bot():
     init_db()
 
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    token = os.getenv("TOKEN")
     if not token:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN mühit dəyişəni təyin edilməlidir.")
+        raise RuntimeError("TOKEN mühit dəyişəni təyin edilməlidir.")
 
     app = build_application(token)
     logger.info("Texnik CRM bot başladıldı")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
-if __name__ == "__main__":
-    main()
+if _name_ == "_main_":
+    threading.Thread(target=run_bot, daemon=True).start()
+    uvicorn.run(web_app, host="0.0.0.0", port=7860)
